@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>MagnifyAll - Product Reader</title>
+    
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- React and ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    
+    <!-- Babel to compile JSX in the browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        .capitalize-first::first-letter { text-transform: uppercase; }
+        #reader button {
+            background-color: #4f46e5; color: white; padding: 16px 24px;
+            border-radius: 12px; font-size: 22px; font-weight: bold;
+            margin: 10px; border: none; cursor: pointer;
+        }
+        #reader a { display: none !important; }
+        #reader__dashboard_section_csr span { font-size: 18px; }
+        body { -webkit-tap-highlight-color: transparent; }
+    </style>
+</head>
+<body class="bg-slate-100 font-sans text-slate-900">
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const App = () => {
+            const [scannerReady, setScannerReady] = useState(false);
+            const [scanning, setScanning] = useState(false);
+            const [searchInput, setSearchInput] = useState("");
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState("");
+            
+            const [productData, setProductData] = useState(null);
+            const [productType, setProductType] = useState(""); // "food", "medicine", "beauty", "products"
+            
+            const [textSize, setTextSize] = useState(24);
+
+            useEffect(() => {
+                if (!window.Html5QrcodeScanner) {
+                    const script = document.createElement('script');
+                    script.src = 'https://unpkg.com/html5-qrcode';
+                    script.async = true;
+                    script.onload = () => setScannerReady(true);
+                    document.body.appendChild(script);
+                } else {
+                    setScannerReady(true);
+                }
+            }, []);
+
+            useEffect(() => {
+                let html5QrcodeScanner;
+
+                if (scanning && scannerReady) {
+                    html5QrcodeScanner = new window.Html5QrcodeScanner(
+                        "reader",
+                        { fps: 10, qrbox: { width: 250, height: 150 }, aspectRatio: 1.0 },
+                        false
+                    );
+
+                    html5QrcodeScanner.render(
+                        (decodedText) => {
+                            html5QrcodeScanner.clear();
+                            setScanning(false);
+                            searchUniversal(decodedText);
+                        },
+                        (errorMessage) => { /* Ignore background scanning errors */ }
+                    );
+                }
+
+                return () => {
+                    if (html5QrcodeScanner) {
+                        html5QrcodeScanner.clear().catch(e => console.error("Failed to clear scanner", e));
+                    }
+                };
+            }, [scanning, scannerReady]);
+
+            const fetchOpenFacts = async (barcode, domain) => {
+                const res = await fetch(`https://world.${domain}/api/v0/product/${barcode}.json`);
+                const data = await res.json();
+                return data;
+            };
+
+            const searchUniversal = async (query) => {
+                setLoading(true);
+                setError("");
+                setProductData(null);
+                setProductType("");
+
+                const cleanQuery = query.trim();
+                const isBarcode = /^\d+$/.test(cleanQuery);
+
+                try {
+                    if (isBarcode) {
+                        // 1. TRY FOOD
+                        try {
+                            const data = await fetchOpenFacts(cleanQuery, "openfoodfacts.org");
+                            if (data.status === 1) {
+                                setProductData(data.product); setProductType("food"); setLoading(false); return;
+                            }
+                        } catch (e) {}
+
+                        // 2. TRY BEAUTY & PERSONAL CARE (Soaps, shampoos, cosmetics)
+                        try {
+                            const data = await fetchOpenFacts(cleanQuery, "openbeautyfacts.org");
+                            if (data.status === 1) {
+                                setProductData(data.product); setProductType("beauty"); setLoading(false); return;
+                            }
+                        } catch (e) {}
+
+                        // 3. TRY GENERAL PRODUCTS (Cleaning supplies, etc.)
+                        try {
+                            const data = await fetchOpenFacts(cleanQuery, "openproductsfacts.org");
+                            if (data.status === 1) {
+                                setProductData(data.product); setProductType("products"); setLoading(false); return;
+                            }
+                        } catch (e) {}
+
+                        // 4. TRY MEDICINE (FDA)
+                        try {
+                            // FDA sometimes uses 10, 11, or 12 digit variations, but we'll try exact match first
+                            const fdaRes = await fetch(`https://api.fda.gov/drug/label.json?search=openfda.upc:"${cleanQuery}"&limit=1`);
+                            const fdaData = await fdaRes.json();
+                            if (fdaData.results && fdaData.results.length > 0) {
+                                setProductData(fdaData.results[0]);
+                                setProductType("medicine");
+                                setLoading(false); return;
+                            }
+                        } catch (e) {}
+
+                        throw new Error("Barcode not found in any of our databases. Try typing the product name instead.");
+
+                    } else {
+                        // TEXT SEARCH
+                        try {
+                            const fdaRes = await fetch(`https://api.fda.gov/drug/label.json?search=openfda.brand_name:"${cleanQuery}"&limit=1`);
+                            const fdaData = await fdaRes.json();
+                            if (fdaData.results && fdaData.results.length > 0) {
+                                setProductData(fdaData.results[0]); setProductType("medicine"); setLoading(false); return;
+                            }
+                        } catch (e) {}
+
+                        try {
+                            const foodRes = await fetch(`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(cleanQuery)}&search_simple=1&action=process&json=1`);
+                            const foodData = await foodRes.json();
+                            if (foodData.products && foodData.products.length > 0) {
+                                setProductData(foodData.products[0]); setProductType("food"); setLoading(false); return;
+                            }
+                        } catch (e) {}
+
+                        throw new Error("Could not find a product with that name in our databases.");
+                    }
+                } catch (err) {
+                    setError(err.message || "Failed to connect to databases.");
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleManualSearch = (e) => {
+                e.preventDefault();
+                if (searchInput.trim()) searchUniversal(searchInput.trim());
+            };
+
+            const increaseText = () => setTextSize(prev => Math.min(prev + 6, 54));
+            const decreaseText = () => setTextSize(prev => Math.max(prev - 6, 16));
+
+            const cleanFdaText = (textArray) => {
+                if (!textArray || textArray.length === 0) return null;
+                return textArray[0].replace(/^(ACTIVE INGREDIENT:|INACTIVE INGREDIENTS:|WARNINGS:|PURPOSE:)/i, '').trim();
+            };
+
+            const formatIngredientsList = (ingredientsText) => {
+                if (!ingredientsText) return [];
+                return ingredientsText.split(/,(?![^\(\)]*\))/).map(item => item.trim().replace(/^_/, '').replace(/_$/, '')).filter(item => item.length > 0);
+            };
+
+            // Reusable component for Food, Beauty, and General Products (since they share the same API structure)
+            const renderOpenFactsData = (theme) => {
+                return (
+                    <React.Fragment>
+                        <div className={`bg-${theme.color}-50 p-6 border-b border-${theme.color}-200`}>
+                            <div className="flex items-start gap-4">
+                                {productData.image_url ? (
+                                    <img src={productData.image_url} alt="Product" className="w-24 h-24 object-cover rounded-xl border border-slate-300 bg-white" />
+                                ) : (
+                                    <i className={`fa-solid ${theme.icon} text-${theme.color}-600 text-6xl`}></i>
+                                )}
+                                <div>
+                                    <span className={`bg-${theme.color}-200 text-${theme.color}-800 text-sm font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-2 inline-block`}>{theme.label}</span>
+                                    <h2 className="text-3xl font-black text-slate-900 leading-tight">{productData.product_name || "Unknown Item"}</h2>
+                                    <p className="text-xl text-slate-600 mt-1">{productData.brands}</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {productData.allergens_hierarchy && productData.allergens_hierarchy.length > 0 && (
+                            <div className="bg-amber-100 p-6 border-b border-amber-200 flex items-start gap-4">
+                                <i className="fa-solid fa-triangle-exclamation text-amber-600 mt-1 text-3xl shrink-0"></i>
+                                <div>
+                                    <h3 className="text-2xl font-bold text-amber-900 mb-2">Contains Allergens/Warnings:</h3>
+                                    <p className="text-xl text-amber-800 font-medium">
+                                        {productData.allergens_hierarchy.map(a => a.replace('en:', '').replace('-', ' ')).join(', ')}
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="p-6">
+                            <h3 className="text-3xl font-bold text-slate-900 mb-6 flex items-center gap-3">
+                                <i className={`fa-solid fa-circle-info text-${theme.color}-600`}></i> Ingredients / Details
+                            </h3>
+                            {productData.ingredients_text ? (
+                                <ul className="space-y-4" style={{ fontSize: `${textSize}px`, lineHeight: '1.4' }}>
+                                    {formatIngredientsList(productData.ingredients_text).map((ingredient, index) => (
+                                        <li key={index} className="flex gap-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                                            <span className={`text-${theme.color}-600 font-black`}>•</span>
+                                            <span className="text-slate-800 font-medium capitalize-first">{ingredient}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            ) : (
+                                <p className="text-xl text-slate-500 italic p-6 bg-slate-50 rounded-xl">
+                                    Ingredient list is not registered for this item in the public database yet.
+                                </p>
+                            )}
+                        </div>
+                    </React.Fragment>
+                );
+            };
+
+            const renderMedicine = () => (
+                <React.Fragment>
+                    <div className="bg-teal-50 p-6 border-b border-teal-200">
+                        <div className="flex items-start gap-4">
+                            <i className="fa-solid fa-pills text-teal-600 text-6xl"></i>
+                            <div>
+                                <span className="bg-teal-200 text-teal-800 text-sm font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-2 inline-block">Medicine / OTC</span>
+                                <h2 className="text-3xl font-black text-slate-900 leading-tight">
+                                    {productData.openfda?.brand_name?.[0] || productData.openfda?.generic_name?.[0] || "Unknown Medicine"}
+                                </h2>
+                                <p className="text-xl text-teal-800 font-medium mt-1">{productData.openfda?.manufacturer_name?.[0]}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {productData.purpose && (
+                        <div className="p-6 bg-blue-50 border-b border-blue-100">
+                            <h3 className="text-2xl font-bold text-blue-900 mb-3 flex items-center gap-2">
+                                <i className="fa-solid fa-circle-info"></i> Purpose
+                            </h3>
+                            <p style={{ fontSize: `${textSize}px`, lineHeight: '1.5' }} className="text-blue-900 font-medium">{cleanFdaText(productData.purpose)}</p>
+                        </div>
+                    )}
+
+                    <div className="p-6 border-b border-slate-100">
+                        <h3 className="text-3xl font-bold text-slate-900 mb-4 flex items-center gap-3">
+                            <i className="fa-solid fa-pills text-teal-600"></i> Active Ingredients
+                        </h3>
+                        {productData.active_ingredient ? (
+                            <p style={{ fontSize: `${textSize}px`, lineHeight: '1.6' }} className="text-slate-800 bg-teal-50/50 p-4 rounded-xl border border-teal-100">{cleanFdaText(productData.active_ingredient)}</p>
+                        ) : (
+                            <p className="text-xl text-slate-500 italic">Not listed</p>
+                        )}
+                    </div>
+
+                    {productData.warnings && (
+                        <div className="p-6 border-b border-amber-200 bg-amber-50">
+                            <h3 className="text-3xl font-bold text-amber-900 mb-4 flex items-center gap-3">
+                                <i className="fa-solid fa-shield-halved text-amber-600"></i> Warnings
+                            </h3>
+                            <p style={{ fontSize: `${textSize}px`, lineHeight: '1.6' }} className="text-amber-900 font-medium">{cleanFdaText(productData.warnings)}</p>
+                        </div>
+                    )}
+
+                    <div className="p-6">
+                        <h3 className="text-2xl font-bold text-slate-700 mb-4">Inactive Ingredients</h3>
+                        {productData.inactive_ingredient ? (
+                            <p style={{ fontSize: `${Math.max(textSize - 4, 16)}px`, lineHeight: '1.6' }} className="text-slate-600">{cleanFdaText(productData.inactive_ingredient)}</p>
+                        ) : (
+                            <p className="text-lg text-slate-500 italic">Not listed.</p>
+                        )}
+                    </div>
+                </React.Fragment>
+            );
+
+            return (
+                <div className="min-h-screen pb-20">
+                    <header className="bg-indigo-900 text-white p-4 shadow-md sticky top-0 z-10 flex justify-between items-center">
+                        <h1 className="text-2xl font-bold flex items-center gap-2">
+                            <i className="fa-solid fa-layer-group"></i> MagnifyAll
+                        </h1>
+                        {productData && (
+                            <div className="flex gap-2">
+                                <button onClick={decreaseText} className="p-3 bg-indigo-800 hover:bg-indigo-700 rounded-lg shadow" aria-label="Decrease Text">
+                                    <i className="fa-solid fa-magnifying-glass-minus text-xl"></i>
+                                </button>
+                                <button onClick={increaseText} className="p-3 bg-indigo-800 hover:bg-indigo-700 rounded-lg shadow" aria-label="Increase Text">
+                                    <i className="fa-solid fa-magnifying-glass-plus text-xl"></i>
+                                </button>
+                            </div>
+                        )}
+                    </header>
+
+                    <main className="max-w-2xl mx-auto p-4 mt-4">
+                        {loading && (
+                            <div className="flex flex-col items-center justify-center p-12 bg-white rounded-3xl shadow-sm border border-slate-200">
+                                <i className="fa-solid fa-spinner fa-spin text-indigo-600 text-6xl mb-6"></i>
+                                <p className="text-2xl text-slate-600 font-medium text-center">Searching catalogs...</p>
+                            </div>
+                        )}
+
+                        {error && !loading && (
+                            <div className="bg-red-50 border-l-8 border-red-500 p-6 rounded-2xl shadow-sm mb-6 flex flex-col items-center text-center">
+                                <i className="fa-solid fa-triangle-exclamation text-red-500 text-5xl mb-4"></i>
+                                <h2 className="text-2xl font-bold text-red-800 mb-2">Not Found</h2>
+                                <p className="text-xl text-red-700 mb-6">{error}</p>
+                                <button onClick={() => setError("")} className="bg-red-100 text-red-800 px-6 py-3 rounded-xl text-xl font-semibold hover:bg-red-200">
+                                    Try Again
+                                </button>
+                            </div>
+                        )}
+
+                        {scanning && !loading && !productData && !error && (
+                            <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-200 mb-6">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h2 className="text-2xl font-bold text-slate-900">Scan Barcode</h2>
+                                    <button onClick={() => setScanning(false)} className="p-2 text-slate-500 hover:text-slate-800">
+                                        <i className="fa-solid fa-circle-xmark text-4xl"></i>
+                                    </button>
+                                </div>
+                                <div id="reader" className="w-full overflow-hidden rounded-xl border-4 border-indigo-100"></div>
+                                <p className="text-center text-xl mt-6 font-medium text-slate-600">Point camera at the barcode.</p>
+                            </div>
+                        )}
+
+                        {!scanning && !productData && !loading && !error && (
+                            <div className="space-y-6">
+                                <div className="bg-indigo-50 p-8 rounded-3xl border border-indigo-100 text-center shadow-sm">
+                                    <div className="flex justify-center gap-6 mb-6 text-indigo-500 text-5xl">
+                                        <i className="fa-solid fa-apple-whole text-green-500"></i>
+                                        <i className="fa-solid fa-pump-soap text-pink-500"></i>
+                                        <i className="fa-solid fa-spray-can-sparkles text-blue-500"></i>
+                                        <i className="fa-solid fa-pills text-teal-500"></i>
+                                    </div>
+                                    <h2 className="text-3xl font-black text-indigo-900 mb-4">Read Tiny Print Easily</h2>
+                                    <p className="text-xl text-indigo-800 mb-8">Scan barcodes on food, cosmetics, cleaning supplies, or medicine.</p>
+                                    
+                                    <button 
+                                        onClick={() => setScanning(true)}
+                                        disabled={!scannerReady}
+                                        className={`w-full py-6 rounded-2xl text-2xl font-bold text-white shadow-lg flex justify-center items-center gap-3 transition-transform active:scale-95 ${scannerReady ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-slate-400 cursor-not-allowed'}`}
+                                    >
+                                        <i className="fa-solid fa-camera text-3xl"></i>
+                                        {scannerReady ? "Tap to Scan Barcode" : "Loading Camera..."}
+                                    </button>
+                                </div>
+
+                                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                                    <h3 className="text-2xl font-bold mb-4 text-slate-800">Or Type Barcode</h3>
+                                    <form onSubmit={handleManualSearch} className="flex flex-col gap-4">
+                                        <input 
+                                            type="text" 
+                                            value={searchInput}
+                                            onChange={(e) => setSearchInput(e.target.value)}
+                                            placeholder="e.g. 0049000028904"
+                                            className="w-full p-5 text-2xl border-2 border-slate-300 rounded-xl focus:border-indigo-600 focus:outline-none"
+                                        />
+                                        <button type="submit" disabled={!searchInput} className="w-full py-5 bg-slate-800 hover:bg-slate-900 disabled:bg-slate-300 text-white rounded-xl text-xl font-bold flex justify-center items-center gap-2">
+                                            <i className="fa-solid fa-magnifying-glass"></i> Find Details
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        )}
+
+                        {productData && !loading && !error && (
+                            <div className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden">
+                                <div className="p-4 bg-slate-100 border-b border-slate-200">
+                                    <button onClick={() => setProductData(null)} className="flex items-center gap-2 text-indigo-700 font-bold text-xl hover:underline">
+                                        <i className="fa-solid fa-chevron-left"></i> Start Over
+                                    </button>
+                                </div>
+
+                                {productType === "food" && renderOpenFactsData({ color: "green", icon: "fa-apple-whole", label: "Food Item" })}
+                                {productType === "beauty" && renderOpenFactsData({ color: "pink", icon: "fa-pump-soap", label: "Personal Care" })}
+                                {productType === "products" && renderOpenFactsData({ color: "blue", icon: "fa-spray-can-sparkles", label: "General Product" })}
+                                {productType === "medicine" && renderMedicine()}
+
+                                <div className="p-6 bg-slate-100 border-t border-slate-200">
+                                    <button onClick={() => { setProductData(null); setScanning(false); setSearchInput(""); window.scrollTo(0,0); }} className="w-full py-6 bg-indigo-900 hover:bg-indigo-950 text-white rounded-2xl text-2xl font-bold shadow-lg flex justify-center items-center gap-3">
+                                        <i className="fa-solid fa-barcode text-3xl"></i> Scan Next Item
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
