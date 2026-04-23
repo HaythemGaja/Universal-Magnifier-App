@@ -11,12 +11,11 @@
     <!-- FontAwesome for Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- React and ReactDOM -->
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-    
-    <!-- Babel to compile JSX in the browser -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- FAST CDNs for React and dependencies to prevent white screens -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.6/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 
     <style>
         .capitalize-first::first-letter { text-transform: uppercase; }
@@ -32,39 +31,61 @@
 </head>
 <body class="bg-slate-100 font-sans text-slate-900">
 
-    <div id="root"></div>
+    <!-- Preloader to prevent the "white screen" while React boots up -->
+    <div id="root">
+        <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; background:#f8fafc;">
+            <i class="fa-solid fa-spinner fa-spin" style="font-size:4rem; color:#4f46e5; margin-bottom:1rem;"></i>
+            <h2 style="font-family:sans-serif; color:#334155; font-size:1.5rem; font-weight:bold;">Loading Magnifier...</h2>
+        </div>
+    </div>
 
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
+        // Custom fetch wrapper to prevent infinite hanging (white screen) if a database is slow
+        const fetchWithTimeout = async (url, timeout = 8000) => {
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), timeout);
+            try {
+                const response = await fetch(url, { signal: controller.signal });
+                clearTimeout(id);
+                return response;
+            } catch (error) {
+                clearTimeout(id);
+                throw error;
+            }
+        };
+
         const App = () => {
-            const [scannerReady, setScannerReady] = useState(false);
             const [scanning, setScanning] = useState(false);
             const [searchInput, setSearchInput] = useState("");
             const [loading, setLoading] = useState(false);
             const [error, setError] = useState("");
             
             const [productData, setProductData] = useState(null);
-            const [productType, setProductType] = useState(""); // "food", "medicine", "beauty", "products"
+            const [productType, setProductType] = useState(""); 
             
             const [textSize, setTextSize] = useState(24);
 
             const [history, setHistory] = useState(() => {
-                const saved = localStorage.getItem('magnifyAll_history');
-                return saved ? JSON.parse(saved) : { success: [], failed: [] };
+                try {
+                    const saved = localStorage.getItem('magnifyAll_history');
+                    return saved ? JSON.parse(saved) : { success: [], failed: [] };
+                } catch(e) { return { success: [], failed: [] }; }
             });
             const [showHistory, setShowHistory] = useState(false);
-            const [historyTab, setHistoryTab] = useState("success"); // "success" or "failed"
+            const [historyTab, setHistoryTab] = useState("success");
 
             const [cameraPermission, setCameraPermission] = useState(() => {
                 return localStorage.getItem('magnifyAll_cameraPermission') || "prompt";
             });
 
+            // Save history
             useEffect(() => {
                 localStorage.setItem('magnifyAll_history', JSON.stringify(history));
             }, [history]);
 
-            // Proactively check and remember camera permissions
+            // Proactively check camera permissions
             useEffect(() => {
                 if (navigator.permissions && navigator.permissions.query) {
                     navigator.permissions.query({ name: 'camera' }).then(res => {
@@ -78,38 +99,34 @@
                 }
             }, []);
 
-            useEffect(() => {
-                if (!window.Html5QrcodeScanner) {
-                    const script = document.createElement('script');
-                    script.src = 'https://unpkg.com/html5-qrcode';
-                    script.async = true;
-                    script.onload = () => setScannerReady(true);
-                    document.body.appendChild(script);
-                } else {
-                    setScannerReady(true);
-                }
-            }, []);
-
+            // Scanner initialization
             useEffect(() => {
                 let html5QrcodeScanner;
 
-                if (scanning && scannerReady) {
+                if (scanning && window.Html5QrcodeScanner) {
                     html5QrcodeScanner = new window.Html5QrcodeScanner(
                         "reader",
                         { 
                             fps: 10, 
                             qrbox: { width: 250, height: 150 }, 
                             aspectRatio: 1.0,
-                            videoConstraints: { facingMode: "environment" } // Forces rear camera by default
+                            rememberLastUsedCamera: false, // Prevents reverting to selfie cam
+                            supportedScanTypes: [0], // Forces Camera scan type only
+                            videoConstraints: { facingMode: { exact: "environment" } } // STRICT Rear Camera enforcement
                         },
                         false
                     );
 
                     html5QrcodeScanner.render(
                         (decodedText) => {
-                            html5QrcodeScanner.clear();
-                            setScanning(false);
-                            searchUniversal(decodedText);
+                            // On successful scan, safely close the scanner before searching
+                            html5QrcodeScanner.clear().then(() => {
+                                setScanning(false);
+                                searchUniversal(decodedText);
+                            }).catch(() => {
+                                setScanning(false);
+                                searchUniversal(decodedText);
+                            });
                         },
                         (errorMessage) => { /* Ignore background scanning errors */ }
                     );
@@ -117,15 +134,14 @@
 
                 return () => {
                     if (html5QrcodeScanner) {
-                        html5QrcodeScanner.clear().catch(e => console.error("Failed to clear scanner", e));
+                        html5QrcodeScanner.clear().catch(e => console.log("Scanner cleanup skipped", e));
                     }
                 };
-            }, [scanning, scannerReady]);
+            }, [scanning]);
 
             const fetchOpenFacts = async (barcode, domain) => {
-                const res = await fetch(`https://world.${domain}/api/v0/product/${barcode}.json`);
-                const data = await res.json();
-                return data;
+                const res = await fetchWithTimeout(`https://world.${domain}/api/v0/product/${barcode}.json`);
+                return await res.json();
             };
 
             const searchUniversal = async (query) => {
@@ -141,38 +157,28 @@
 
                 try {
                     if (isBarcode) {
-                        // 1. TRY FOOD
                         try {
                             const data = await fetchOpenFacts(cleanQuery, "openfoodfacts.org");
-                            if (data.status === 1) {
-                                foundData = data.product; foundType = "food";
-                            }
+                            if (data.status === 1) { foundData = data.product; foundType = "food"; }
                         } catch (e) {}
 
-                        // 2. TRY BEAUTY & PERSONAL CARE (Soaps, shampoos, cosmetics)
                         if (!foundData) {
                             try {
                                 const data = await fetchOpenFacts(cleanQuery, "openbeautyfacts.org");
-                                if (data.status === 1) {
-                                    foundData = data.product; foundType = "beauty";
-                                }
+                                if (data.status === 1) { foundData = data.product; foundType = "beauty"; }
                             } catch (e) {}
                         }
 
-                        // 3. TRY GENERAL PRODUCTS (Cleaning supplies, etc.)
                         if (!foundData) {
                             try {
                                 const data = await fetchOpenFacts(cleanQuery, "openproductsfacts.org");
-                                if (data.status === 1) {
-                                    foundData = data.product; foundType = "products";
-                                }
+                                if (data.status === 1) { foundData = data.product; foundType = "products"; }
                             } catch (e) {}
                         }
 
-                        // 4. TRY MEDICINE (FDA)
                         if (!foundData) {
                             try {
-                                const fdaRes = await fetch(`https://api.fda.gov/drug/label.json?search=openfda.upc:"${cleanQuery}"&limit=1`);
+                                const fdaRes = await fetchWithTimeout(`https://api.fda.gov/drug/label.json?search=openfda.upc:"${cleanQuery}"&limit=1`);
                                 const fdaData = await fdaRes.json();
                                 if (fdaData.results && fdaData.results.length > 0) {
                                     foundData = fdaData.results[0]; foundType = "medicine";
@@ -183,9 +189,8 @@
                         if (!foundData) throw new Error("Barcode not found in any of our databases. Try typing the product name instead.");
 
                     } else {
-                        // TEXT SEARCH
                         try {
-                            const fdaRes = await fetch(`https://api.fda.gov/drug/label.json?search=openfda.brand_name:"${cleanQuery}"&limit=1`);
+                            const fdaRes = await fetchWithTimeout(`https://api.fda.gov/drug/label.json?search=openfda.brand_name:"${cleanQuery}"&limit=1`);
                             const fdaData = await fdaRes.json();
                             if (fdaData.results && fdaData.results.length > 0) {
                                 foundData = fdaData.results[0]; foundType = "medicine";
@@ -194,7 +199,7 @@
 
                         if (!foundData) {
                             try {
-                                const foodRes = await fetch(`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(cleanQuery)}&search_simple=1&action=process&json=1`);
+                                const foodRes = await fetchWithTimeout(`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(cleanQuery)}&search_simple=1&action=process&json=1`);
                                 const foodData = await foodRes.json();
                                 if (foodData.products && foodData.products.length > 0) {
                                     foundData = foodData.products[0]; foundType = "food";
@@ -237,17 +242,18 @@
             const decreaseText = () => setTextSize(prev => Math.max(prev - 6, 16));
 
             const cleanFdaText = (textArray) => {
-                if (!textArray || textArray.length === 0) return null;
+                if (!textArray || textArray.length === 0 || typeof textArray[0] !== 'string') return null;
                 return textArray[0].replace(/^(ACTIVE INGREDIENT:|INACTIVE INGREDIENTS:|WARNINGS:|PURPOSE:)/i, '').trim();
             };
 
             const formatIngredientsList = (ingredientsText) => {
-                if (!ingredientsText) return [];
+                if (!ingredientsText || typeof ingredientsText !== 'string') return [];
                 return ingredientsText.split(/,(?![^\(\)]*\))/).map(item => item.trim().replace(/^_/, '').replace(/_$/, '')).filter(item => item.length > 0);
             };
 
-            // Reusable component for Food, Beauty, and General Products (since they share the same API structure)
             const renderOpenFactsData = (theme) => {
+                const hasAllergens = Array.isArray(productData.allergens_hierarchy) && productData.allergens_hierarchy.length > 0;
+                
                 return (
                     <React.Fragment>
                         <div className={`bg-${theme.color}-50 p-6 border-b border-${theme.color}-200`}>
@@ -265,13 +271,13 @@
                             </div>
                         </div>
                         
-                        {productData.allergens_hierarchy && productData.allergens_hierarchy.length > 0 && (
+                        {hasAllergens && (
                             <div className="bg-amber-100 p-6 border-b border-amber-200 flex items-start gap-4">
                                 <i className="fa-solid fa-triangle-exclamation text-amber-600 mt-1 text-3xl shrink-0"></i>
                                 <div>
                                     <h3 className="text-2xl font-bold text-amber-900 mb-2">Contains Allergens/Warnings:</h3>
                                     <p className="text-xl text-amber-800 font-medium">
-                                        {productData.allergens_hierarchy.map(a => a.replace('en:', '').replace('-', ' ')).join(', ')}
+                                        {productData.allergens_hierarchy.map(a => typeof a === 'string' ? a.replace('en:', '').replace('-', ' ') : '').join(', ')}
                                     </p>
                                 </div>
                             </div>
@@ -487,11 +493,11 @@
 
                                             <button 
                                                 onClick={() => setScanning(true)}
-                                                disabled={!scannerReady || cameraPermission === 'denied'}
-                                                className={`w-full py-6 rounded-2xl text-2xl font-bold text-white shadow-lg flex justify-center items-center gap-3 transition-transform active:scale-95 ${!scannerReady || cameraPermission === 'denied' ? 'bg-slate-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
+                                                disabled={cameraPermission === 'denied'}
+                                                className={`w-full py-6 rounded-2xl text-2xl font-bold text-white shadow-lg flex justify-center items-center gap-3 transition-transform active:scale-95 ${cameraPermission === 'denied' ? 'bg-slate-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
                                             >
                                                 <i className="fa-solid fa-camera text-3xl"></i>
-                                                {!scannerReady ? "Loading Camera..." : cameraPermission === 'granted' ? "Open Scanner" : "Grant Camera & Scan"}
+                                                {cameraPermission === 'granted' ? "Open Scanner" : "Grant Camera & Scan"}
                                             </button>
                                         </div>
 
