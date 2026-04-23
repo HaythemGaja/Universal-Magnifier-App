@@ -56,9 +56,27 @@
             const [showHistory, setShowHistory] = useState(false);
             const [historyTab, setHistoryTab] = useState("success"); // "success" or "failed"
 
+            const [cameraPermission, setCameraPermission] = useState(() => {
+                return localStorage.getItem('magnifyAll_cameraPermission') || "prompt";
+            });
+
             useEffect(() => {
                 localStorage.setItem('magnifyAll_history', JSON.stringify(history));
             }, [history]);
+
+            // Proactively check and remember camera permissions
+            useEffect(() => {
+                if (navigator.permissions && navigator.permissions.query) {
+                    navigator.permissions.query({ name: 'camera' }).then(res => {
+                        setCameraPermission(res.state);
+                        localStorage.setItem('magnifyAll_cameraPermission', res.state);
+                        res.onchange = () => {
+                            setCameraPermission(res.state);
+                            localStorage.setItem('magnifyAll_cameraPermission', res.state);
+                        };
+                    }).catch(e => console.log("Permissions API check failed", e));
+                }
+            }, []);
 
             useEffect(() => {
                 if (!window.Html5QrcodeScanner) {
@@ -461,13 +479,19 @@
                                             <h2 className="text-3xl font-black text-indigo-900 mb-4">Read Tiny Print Easily</h2>
                                             <p className="text-xl text-indigo-800 mb-8">Scan barcodes on food, cosmetics, cleaning supplies, or medicine.</p>
                                             
+                                            {cameraPermission === 'denied' && (
+                                                <div className="mb-6 p-4 bg-red-100 text-red-800 rounded-xl text-sm font-medium border border-red-200">
+                                                    <i className="fa-solid fa-triangle-exclamation mr-2"></i> Camera access is blocked. Please enable it in your browser settings to scan barcodes.
+                                                </div>
+                                            )}
+
                                             <button 
                                                 onClick={() => setScanning(true)}
-                                                disabled={!scannerReady}
-                                                className={`w-full py-6 rounded-2xl text-2xl font-bold text-white shadow-lg flex justify-center items-center gap-3 transition-transform active:scale-95 ${scannerReady ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-slate-400 cursor-not-allowed'}`}
+                                                disabled={!scannerReady || cameraPermission === 'denied'}
+                                                className={`w-full py-6 rounded-2xl text-2xl font-bold text-white shadow-lg flex justify-center items-center gap-3 transition-transform active:scale-95 ${!scannerReady || cameraPermission === 'denied' ? 'bg-slate-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
                                             >
                                                 <i className="fa-solid fa-camera text-3xl"></i>
-                                                {scannerReady ? "Tap to Scan Barcode" : "Loading Camera..."}
+                                                {!scannerReady ? "Loading Camera..." : cameraPermission === 'granted' ? "Open Scanner" : "Grant Camera & Scan"}
                                             </button>
                                         </div>
 
