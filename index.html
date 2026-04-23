@@ -169,6 +169,29 @@
                             } catch (e) {}
                         }
 
+                        // FDA FALLBACK: Try without leading zero (FDA often omits it)
+                        if (!foundData && cleanQuery.startsWith('0')) {
+                            try {
+                                const trimmedQuery = cleanQuery.substring(1);
+                                const fdaRes = await fetchWithTimeout(`https://api.fda.gov/drug/label.json?search=openfda.upc:"${trimmedQuery}"&limit=1`);
+                                const fdaData = await fdaRes.json();
+                                if (fdaData.results && fdaData.results.length > 0) {
+                                    foundData = fdaData.results[0]; foundType = "medicine";
+                                }
+                            } catch (e) {}
+                        }
+
+                        // ULTIMATE FALLBACK: Commercial UPC Database (UPCItemDB)
+                        if (!foundData) {
+                            try {
+                                const upcRes = await fetchWithTimeout(`https://api.upcitemdb.com/prod/trial/lookup?upc=${cleanQuery}`);
+                                const upcData = await upcRes.json();
+                                if (upcData.code === "OK" && upcData.items && upcData.items.length > 0) {
+                                    foundData = upcData.items[0]; foundType = "general";
+                                }
+                            } catch (e) {}
+                        }
+
                         if (!foundData) throw new Error("Barcode not found in any of our databases. Try typing the product name instead.");
 
                     } else {
@@ -198,6 +221,8 @@
                     
                     const productName = foundType === "medicine" 
                         ? (foundData.openfda?.brand_name?.[0] || foundData.openfda?.generic_name?.[0] || "Unknown Medicine")
+                        : foundType === "general"
+                        ? (foundData.title || "Unknown Item")
                         : (foundData.product_name || foundData.title || "Unknown Item");
                         
                     setHistory(prev => ({ 
@@ -339,6 +364,38 @@
                             <p style={{ fontSize: `${Math.max(textSize - 4, 16)}px`, lineHeight: '1.6' }} className="text-slate-600">{cleanFdaText(productData.inactive_ingredient)}</p>
                         ) : (
                             <p className="text-lg text-slate-500 italic">Not listed.</p>
+                        )}
+                    </div>
+                </React.Fragment>
+            );
+
+            const renderGeneral = () => (
+                <React.Fragment>
+                    <div className="bg-indigo-50 p-6 border-b border-indigo-200">
+                        <div className="flex items-start gap-4">
+                            {productData.images && productData.images.length > 0 ? (
+                                <img src={productData.images[0]} alt="Product" className="w-24 h-24 object-cover rounded-xl border border-slate-300 bg-white" />
+                            ) : (
+                                <i className="fa-solid fa-box text-indigo-600 text-6xl"></i>
+                            )}
+                            <div>
+                                <span className="bg-indigo-200 text-indigo-800 text-sm font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-2 inline-block">General Product</span>
+                                <h2 className="text-3xl font-black text-slate-900 leading-tight">{productData.title || "Unknown Item"}</h2>
+                                <p className="text-xl text-indigo-800 font-medium mt-1">{productData.brand}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="p-6">
+                        <h3 className="text-3xl font-bold text-slate-900 mb-6 flex items-center gap-3">
+                            <i className="fa-solid fa-circle-info text-indigo-600"></i> Details & Description
+                        </h3>
+                        {productData.description ? (
+                            <p style={{ fontSize: `${textSize}px`, lineHeight: '1.6' }} className="text-slate-800 bg-slate-50 p-6 rounded-xl border border-slate-200">
+                                {productData.description}
+                            </p>
+                        ) : (
+                            <p className="text-xl text-slate-500 italic p-6 bg-slate-50 rounded-xl">No detailed description available for this item.</p>
                         )}
                     </div>
                 </React.Fragment>
@@ -511,6 +568,7 @@
                                         {productType === "beauty" && renderOpenFactsData({ color: "pink", icon: "fa-pump-soap", label: "Personal Care" })}
                                         {productType === "products" && renderOpenFactsData({ color: "blue", icon: "fa-spray-can-sparkles", label: "General Product" })}
                                         {productType === "medicine" && renderMedicine()}
+                                        {productType === "general" && renderGeneral()}
 
                                         <div className="p-6 bg-slate-100 border-t border-slate-200">
                                             <button onClick={() => { setProductData(null); setScanning(false); setSearchInput(""); window.scrollTo(0,0); }} className="w-full py-6 bg-indigo-900 hover:bg-indigo-950 text-white rounded-2xl text-2xl font-bold shadow-lg flex justify-center items-center gap-3">
