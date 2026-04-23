@@ -140,56 +140,56 @@
 
                 try {
                     if (isBarcode) {
-                        try {
-                            const data = await fetchOpenFacts(cleanQuery, "openfoodfacts.org");
-                            if (data.status === 1) { foundData = data.product; foundType = "food"; }
-                        } catch (e) {}
+                        // Create variations of the barcode because databases are strict about formatting
+                        const eanQuery = cleanQuery.padStart(13, '0'); // EAN-13 (Open Facts standard)
+                        const upcQuery = cleanQuery.padStart(12, '0'); // UPC-A (UPCItemDB standard)
+                        const fdaQuery = cleanQuery.replace(/^0+/, ''); // FDA standard (often drops leading zeros)
 
-                        if (!foundData) {
-                            try {
-                                const data = await fetchOpenFacts(cleanQuery, "openbeautyfacts.org");
-                                if (data.status === 1) { foundData = data.product; foundType = "beauty"; }
-                            } catch (e) {}
+                        // 1. OPEN FACTS DATABASES (Food, Beauty, General Products)
+                        const openFactsQueries = Array.from(new Set([cleanQuery, eanQuery]));
+                        for (const q of openFactsQueries) {
+                            if (foundData) break;
+                            for (const domain of ["openfoodfacts.org", "openbeautyfacts.org", "openproductsfacts.org"]) {
+                                try {
+                                    const data = await fetchOpenFacts(q, domain);
+                                    if (data.status === 1) { 
+                                        foundData = data.product; 
+                                        foundType = domain.includes("food") ? "food" : domain.includes("beauty") ? "beauty" : "products";
+                                        break;
+                                    }
+                                } catch (e) {}
+                            }
                         }
 
+                        // 2. FDA MEDICINE DATABASE
                         if (!foundData) {
-                            try {
-                                const data = await fetchOpenFacts(cleanQuery, "openproductsfacts.org");
-                                if (data.status === 1) { foundData = data.product; foundType = "products"; }
-                            } catch (e) {}
+                            const fdaQueries = Array.from(new Set([cleanQuery, upcQuery, fdaQuery]));
+                            for (const q of fdaQueries) {
+                                if (foundData) break;
+                                try {
+                                    const fdaRes = await fetchWithTimeout(`https://api.fda.gov/drug/label.json?search=openfda.upc:"${q}"&limit=1`);
+                                    const fdaData = await fdaRes.json();
+                                    if (fdaData.results && fdaData.results.length > 0) {
+                                        foundData = fdaData.results[0]; foundType = "medicine";
+                                        break;
+                                    }
+                                } catch (e) {}
+                            }
                         }
 
+                        // 3. ULTIMATE FALLBACK: Commercial UPC Database (UPCItemDB)
                         if (!foundData) {
                             try {
-                                const fdaRes = await fetchWithTimeout(`https://api.fda.gov/drug/label.json?search=openfda.upc:"${cleanQuery}"&limit=1`);
-                                const fdaData = await fdaRes.json();
-                                if (fdaData.results && fdaData.results.length > 0) {
-                                    foundData = fdaData.results[0]; foundType = "medicine";
-                                }
-                            } catch (e) {}
-                        }
-
-                        // FDA FALLBACK: Try without leading zero (FDA often omits it)
-                        if (!foundData && cleanQuery.startsWith('0')) {
-                            try {
-                                const trimmedQuery = cleanQuery.substring(1);
-                                const fdaRes = await fetchWithTimeout(`https://api.fda.gov/drug/label.json?search=openfda.upc:"${trimmedQuery}"&limit=1`);
-                                const fdaData = await fdaRes.json();
-                                if (fdaData.results && fdaData.results.length > 0) {
-                                    foundData = fdaData.results[0]; foundType = "medicine";
-                                }
-                            } catch (e) {}
-                        }
-
-                        // ULTIMATE FALLBACK: Commercial UPC Database (UPCItemDB)
-                        if (!foundData) {
-                            try {
-                                const upcRes = await fetchWithTimeout(`https://api.upcitemdb.com/prod/trial/lookup?upc=${cleanQuery}`);
+                                // We use a CORS proxy (allorigins) because UPCItemDB blocks direct browser requests.
+                                // We use the exactly-12-digit upcQuery as they require strict UPC-A.
+                                const targetUrl = `https://api.upcitemdb.com/prod/trial/lookup?upc=${upcQuery}`;
+                                const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+                                const upcRes = await fetchWithTimeout(proxyUrl, 10000);
                                 const upcData = await upcRes.json();
                                 if (upcData.code === "OK" && upcData.items && upcData.items.length > 0) {
                                     foundData = upcData.items[0]; foundType = "general";
                                 }
-                            } catch (e) {}
+                            } catch (e) { console.error("UPCItemDB Proxy failed:", e); }
                         }
 
                         if (!foundData) throw new Error("Barcode not found in any of our databases. Try typing the product name instead.");
