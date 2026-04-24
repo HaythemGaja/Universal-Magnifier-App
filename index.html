@@ -5,13 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MagnifyAll - Product Reader</title>
     
-    <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- FontAwesome for Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- FAST CDNs for React and dependencies to prevent white screens -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.6/babel.min.js"></script>
@@ -26,18 +22,18 @@
             transition: background-color 0.2s;
         }
         #reader button:focus-visible,
-        button:focus-visible {
+        button:focus-visible, a:focus-visible {
             outline: 3px solid #fbbf24;
             outline-offset: 2px;
         }
         #reader a { display: none !important; }
         #reader__dashboard_section_csr span { font-size: 18px; }
         body { -webkit-tap-highlight-color: transparent; }
+        .nav-item { transition: all 0.2s; }
     </style>
 </head>
-<body class="bg-slate-100 font-sans text-slate-900">
+<body class="bg-gradient-to-b from-slate-50 to-slate-100 font-sans text-slate-900">
 
-    <!-- Preloader to prevent the "white screen" while React boots up -->
     <div id="root">
         <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; background:#f8fafc;">
             <i class="fa-solid fa-spinner fa-spin" style="font-size:4rem; color:#4f46e5; margin-bottom:1rem;"></i>
@@ -48,7 +44,6 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        // Custom fetch wrapper with timeout to prevent infinite hanging
         const fetchWithTimeout = async (url, timeout = 8000) => {
             const controller = new AbortController();
             const id = setTimeout(() => controller.abort(), timeout);
@@ -74,27 +69,24 @@
             const [textSize, setTextSize] = useState(24);
 
             const currentSearchId = useRef(0);
-            const scannerRef = useRef(null); // to safely stop the scanner
+            const scannerRef = useRef(null);
 
             const [history, setHistory] = useState(() => {
                 try {
-                    const saved = localStorage.getItem('magnifyAll_history');
-                    return saved ? JSON.parse(saved) : { success: [], failed: [] };
+                    return JSON.parse(localStorage.getItem('magnifyAll_history')) || { success: [], failed: [] };
                 } catch(e) { return { success: [], failed: [] }; }
             });
             const [showHistory, setShowHistory] = useState(false);
             const [historyTab, setHistoryTab] = useState("success");
 
-            // Save history to localStorage
             useEffect(() => {
                 localStorage.setItem('magnifyAll_history', JSON.stringify(history));
             }, [history]);
 
-            // Hash-based routing – handles physical Back button and manual hash changes
+            // Hash navigation
             useEffect(() => {
                 const onHashChange = () => {
                     const hash = window.location.hash;
-                    
                     if (hash === '#scanner') {
                         currentSearchId.current++;
                         setLoading(false);
@@ -117,7 +109,6 @@
                         setShowHistory(false);
                         setScanning(false);
                     } else {
-                        // Home
                         currentSearchId.current++; 
                         setLoading(false);
                         setScanning(false);
@@ -126,13 +117,11 @@
                         setError("");
                     }
                 };
-
                 window.addEventListener('hashchange', onHashChange);
-                onHashChange(); // init on mount
+                onHashChange();
                 return () => window.removeEventListener('hashchange', onHashChange);
             }, []);
 
-            // Safe navigation without breaking history
             const safeBack = () => {
                 if (window.location.hash !== '') {
                     window.history.back();
@@ -142,7 +131,6 @@
                 }
             };
 
-            // Fully reset app state (used instead of page reload)
             const resetApp = () => {
                 currentSearchId.current++;
                 setLoading(false);
@@ -155,53 +143,46 @@
                 window.location.hash = '';
             };
 
-            // Camera scanner initialization
+            // Scanner
             useEffect(() => {
                 let html5QrCode;
                 if (scanning && window.Html5Qrcode) {
                     html5QrCode = new window.Html5Qrcode("reader");
-                    scannerRef.current = html5QrCode; // store ref for cleanup
+                    scannerRef.current = html5QrCode;
                     
                     html5QrCode.start(
                         { facingMode: "environment" }, 
                         { fps: 10, qrbox: { width: 250, height: 150 }, aspectRatio: 1.0 },
                         (decodedText) => {
                             if (html5QrCode.isScanning) {
-                                html5QrCode.stop().then(() => {
-                                    searchUniversal(decodedText);
-                                }).catch(() => {
-                                    searchUniversal(decodedText);
-                                });
+                                html5QrCode.stop().then(() => searchUniversal(decodedText)).catch(() => searchUniversal(decodedText));
                             }
                         },
-                        (errorMessage) => { /* scanning background errors ignored */ }
-                    ).catch((err) => {
+                        () => {}
+                    ).catch(err => {
                         console.error("Camera start failed:", err);
-                        let detailedMsg = "Could not start camera. Please ensure:";
-                        if (location.protocol !== 'https:') detailedMsg += "\n• You are using HTTPS (required for camera access)";
-                        detailedMsg += "\n• Camera permission is granted in your browser settings";
-                        detailedMsg += "\n• No other app is using the camera";
-                        setError(detailedMsg);
+                        let msg = "Could not start camera. Make sure:";
+                        if (location.protocol !== 'https:') msg += "\n• You are using HTTPS";
+                        msg += "\n• Camera permission is granted";
+                        msg += "\n• No other app is using the camera";
+                        setError(msg);
                         window.location.hash = 'error';
                         setScanning(false);
                     });
                 }
-
                 return () => {
-                    // Cleanup: stop scanner if mounted
                     if (scannerRef.current && scannerRef.current.isScanning) {
-                        scannerRef.current.stop().catch(e => console.log("Scanner cleanup skipped", e));
+                        scannerRef.current.stop().catch(e => console.log("Scanner cleanup", e));
                     }
                 };
             }, [scanning]);
 
-            // Fetch from a single Open Facts domain
             const fetchOpenFacts = async (barcode, domain) => {
                 const res = await fetchWithTimeout(`https://world.${domain}/api/v0/product/${barcode}.json`);
                 return await res.json();
             };
 
-            // Main search function with improved parallelism and error handling
+            // Reverted to sequential OpenFacts search for compatibility
             const searchUniversal = async (query) => {
                 const searchId = ++currentSearchId.current;
                 setLoading(true);
@@ -211,496 +192,411 @@
 
                 const cleanQuery = query.trim();
                 const isBarcode = /^\d+$/.test(cleanQuery);
-                let foundData = null;
-                let foundType = "";
+                let foundData = null, foundType = "";
 
                 try {
                     if (isBarcode) {
-                        const eanQuery = cleanQuery.padStart(13, '0'); 
+                        const eanQuery = cleanQuery.padStart(13, '0');
                         const upcQuery = cleanQuery.padStart(12, '0');
                         const fdaQuery = cleanQuery.replace(/^0+/, '');
 
-                        // 1) Try all three OpenFacts domains in parallel (Promise.any)
                         const openFactsQueries = Array.from(new Set([cleanQuery, eanQuery]));
-                        try {
-                            const firstSuccess = await Promise.any(
-                                openFactsQueries.flatMap(q =>
-                                    ["openfoodfacts.org", "openbeautyfacts.org", "openproductsfacts.org"].map(async domain => {
-                                        const data = await fetchOpenFacts(q, domain);
-                                        if (data.status === 1) {
-                                            return { product: data.product, type: domain.includes("food") ? "food" : domain.includes("beauty") ? "beauty" : "products" };
-                                        }
-                                        throw new Error("Not found");
-                                    })
-                                )
-                            );
-                            foundData = firstSuccess.product;
-                            foundType = firstSuccess.type;
-                        } catch (e) {
-                            // All OpenFacts failed silently; continue to next source
-                        }
-
-                        // 2) FDA if not found
-                        if (!foundData) {
-                            const fdaQueries = Array.from(new Set([cleanQuery, upcQuery, fdaQuery]));
-                            for (const q of fdaQueries) {
+                        for (const q of openFactsQueries) {
+                            if (foundData) break;
+                            for (const domain of ["openfoodfacts.org", "openbeautyfacts.org", "openproductsfacts.org"]) {
                                 try {
-                                    const fdaRes = await fetchWithTimeout(`https://api.fda.gov/drug/label.json?search=openfda.upc:"${q}"&limit=1`);
-                                    const fdaData = await fdaRes.json();
-                                    if (fdaData.results && fdaData.results.length > 0) {
-                                        foundData = fdaData.results[0]; 
-                                        foundType = "medicine";
+                                    const data = await fetchOpenFacts(q, domain);
+                                    if (data.status === 1) { 
+                                        foundData = data.product; 
+                                        foundType = domain.includes("food") ? "food" : domain.includes("beauty") ? "beauty" : "products";
                                         break;
                                     }
                                 } catch (e) {}
                             }
                         }
 
-                        // 3) UPCitemdb via proxy (fallback)
+                        if (!foundData) {
+                            const fdaQueries = Array.from(new Set([cleanQuery, upcQuery, fdaQuery]));
+                            for (const q of fdaQueries) {
+                                if (foundData) break;
+                                try {
+                                    const fdaRes = await fetchWithTimeout(`https://api.fda.gov/drug/label.json?search=openfda.upc:"${q}"&limit=1`);
+                                    const fdaData = await fdaRes.json();
+                                    if (fdaData.results?.length) { foundData = fdaData.results[0]; foundType = "medicine"; break; }
+                                } catch (e) {}
+                            }
+                        }
+
                         if (!foundData) {
                             try {
-                                const targetUrl = `https://api.upcitemdb.com/prod/trial/lookup?upc=${upcQuery}`;
-                                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
-                                const upcRes = await fetchWithTimeout(proxyUrl, 15000); 
+                                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(`https://api.upcitemdb.com/prod/trial/lookup?upc=${upcQuery}`)}`;
+                                const upcRes = await fetchWithTimeout(proxyUrl, 15000);
                                 const upcData = await upcRes.json();
-                                if (upcData.code === "OK" && upcData.items && upcData.items.length > 0) {
-                                    foundData = upcData.items[0]; 
-                                    foundType = "general";
-                                }
-                            } catch (e) {
-                                console.error("UPCItemDB Proxy failed:", e);
-                            }
+                                if (upcData.code === "OK" && upcData.items?.length) { foundData = upcData.items[0]; foundType = "general"; }
+                            } catch (e) { console.error("UPCItemDB error:", e); }
                         }
 
                         if (!foundData) throw new Error("Barcode not found in any database. Try typing the product name instead.");
                     } else {
-                        // Name search
-                        // FDA drug label by brand name
                         try {
                             const fdaRes = await fetchWithTimeout(`https://api.fda.gov/drug/label.json?search=openfda.brand_name:"${cleanQuery}"&limit=1`);
                             const fdaData = await fdaRes.json();
-                            if (fdaData.results && fdaData.results.length > 0) {
-                                foundData = fdaData.results[0]; 
-                                foundType = "medicine";
-                            }
+                            if (fdaData.results?.length) { foundData = fdaData.results[0]; foundType = "medicine"; }
                         } catch (e) {}
-
-                        // Open Food Facts text search
                         if (!foundData) {
                             try {
                                 const foodRes = await fetchWithTimeout(`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(cleanQuery)}&search_simple=1&action=process&json=1`);
                                 const foodData = await foodRes.json();
-                                if (foodData.products && foodData.products.length > 0) {
-                                    foundData = foodData.products[0]; 
-                                    foundType = "food";
-                                }
+                                if (foodData.products?.length) { foundData = foodData.products[0]; foundType = "food"; }
                             } catch (e) {}
                         }
-
-                        if (!foundData) throw new Error("Could not find a product with that name. Try scanning its barcode instead.");
+                        if (!foundData) throw new Error("Could not find a product with that name. Try scanning its barcode.");
                     }
                     
-                    // Prevent ghost update if the user cancelled/started a new search
                     if (searchId !== currentSearchId.current) return;
 
                     setProductData(foundData);
                     setProductType(foundType);
                     
                     const productName = foundType === "medicine" 
-                        ? (foundData.openfda?.brand_name?.[0] || foundData.openfda?.generic_name?.[0] || "Unknown Medicine")
+                        ? (foundData.openfda?.brand_name?.[0] || foundData.openfda?.generic_name?.[0] || "Medicine")
                         : foundType === "general"
-                        ? (foundData.title || "Unknown Item")
-                        : (foundData.product_name || foundData.title || "Unknown Item");
+                        ? (foundData.title || "Item")
+                        : (foundData.product_name || foundData.title || "Item");
                         
                     setHistory(prev => ({ 
                         ...prev, 
-                        success: [{
-                            query: cleanQuery,
-                            name: productName,
-                            type: foundType,
-                            date: new Date().toISOString()
-                        }, ...prev.success] 
+                        success: [{ query: cleanQuery, name: productName, type: foundType, date: new Date().toISOString() }, ...prev.success] 
                     }));
-
                     window.location.hash = 'product';
-
                 } catch (err) {
                     if (searchId !== currentSearchId.current) return;
-                    
-                    setError(err.message || "Failed to connect. Please check your internet connection.");
+                    setError(err.message || "Connection failed.");
                     setHistory(prev => ({ 
                         ...prev, 
-                        failed: [{
-                            query: cleanQuery,
-                            error: err.message || "Not found",
-                            date: new Date().toISOString()
-                        }, ...prev.failed] 
+                        failed: [{ query: cleanQuery, error: err.message || "Not found", date: new Date().toISOString() }, ...prev.failed] 
                     }));
-
                     window.location.hash = 'error';
                 } finally {
-                    if (searchId === currentSearchId.current) {
-                        setLoading(false);
-                    }
+                    if (searchId === currentSearchId.current) setLoading(false);
                 }
             };
 
             const handleManualSearch = (e) => {
                 e.preventDefault();
-                if (searchInput.trim()) searchUniversal(searchInput.trim());
+                if (searchInput.trim()) {
+                    window.location.hash = '';  // go home to show loading
+                    searchUniversal(searchInput.trim());
+                }
             };
 
             const increaseText = () => setTextSize(prev => Math.min(prev + 6, 54));
             const decreaseText = () => setTextSize(prev => Math.max(prev - 6, 16));
 
-            // Clean FDA text arrays (remove section headers)
             const cleanFdaText = (textArray) => {
-                if (!textArray || textArray.length === 0 || typeof textArray[0] !== 'string') return null;
-                return textArray[0]
-                    .replace(/^(ACTIVE INGREDIENT|INACTIVE INGREDIENTS|WARNINGS|PURPOSE):?/i, '')
-                    .trim();
+                if (!textArray?.[0] || typeof textArray[0] !== 'string') return null;
+                return textArray[0].replace(/^(ACTIVE INGREDIENT|INACTIVE INGREDIENTS|WARNINGS|PURPOSE):?/i, '').trim();
             };
 
-            // Safely split ingredients text, handling parentheses
             const formatIngredientsList = (ingredientsText) => {
                 if (!ingredientsText || typeof ingredientsText !== 'string') return [];
-                return ingredientsText
-                    .split(/,(?![^\(\)]*\))/)
-                    .map(item => item.trim().replace(/^_/, '').replace(/_$/, ''))
-                    .filter(item => item.length > 0);
+                return ingredientsText.split(/,(?![^\(\)]*\))/).map(i => i.trim().replace(/^_/, '').replace(/_$/, '').trim()).filter(Boolean);
             };
 
-            // --- Product renderers (unchanged except minor style tweaks) ---
-            const renderOpenFactsData = (theme) => {
-                const hasAllergens = Array.isArray(productData.allergens_hierarchy) && productData.allergens_hierarchy.length > 0;
-                
-                return (
-                    <React.Fragment>
-                        <div className={`bg-${theme.color}-50 p-6 border-b border-${theme.color}-200`}>
-                            <div className="flex items-start gap-4">
-                                {productData.image_url ? (
-                                    <img src={productData.image_url} alt="Product" className="w-24 h-24 object-cover rounded-xl border border-slate-300 bg-white" />
-                                ) : (
-                                    <i className={`fa-solid ${theme.icon} text-${theme.color}-600 text-6xl`}></i>
-                                )}
-                                <div>
-                                    <span className={`bg-${theme.color}-200 text-${theme.color}-800 text-sm font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-2 inline-block`}>{theme.label}</span>
-                                    <h2 className="text-3xl font-black text-slate-900 leading-tight">{productData.product_name || "Unknown Item"}</h2>
-                                    <p className="text-xl text-slate-600 mt-1">{productData.brands}</p>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        {hasAllergens && (
-                            <div className="bg-amber-100 p-6 border-b border-amber-200 flex items-start gap-4">
-                                <i className="fa-solid fa-triangle-exclamation text-amber-600 mt-1 text-3xl shrink-0"></i>
-                                <div>
-                                    <h3 className="text-2xl font-bold text-amber-900 mb-2">Contains Allergens/Warnings:</h3>
-                                    <p className="text-xl text-amber-800 font-medium">
-                                        {productData.allergens_hierarchy.map(a => typeof a === 'string' ? a.replace('en:', '').replace('-', ' ') : '').join(', ')}
-                                    </p>
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="p-6">
-                            <h3 className="text-3xl font-bold text-slate-900 mb-6 flex items-center gap-3">
-                                <i className={`fa-solid fa-circle-info text-${theme.color}-600`}></i> Ingredients / Details
-                            </h3>
-                            {productData.ingredients_text ? (
-                                <ul className="space-y-4" style={{ fontSize: `${textSize}px`, lineHeight: '1.4' }}>
-                                    {formatIngredientsList(productData.ingredients_text).map((ingredient, index) => (
-                                        <li key={index} className="flex gap-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
-                                            <span className={`text-${theme.color}-600 font-black`}>•</span>
-                                            <span className="text-slate-800 font-medium capitalize-first">{ingredient}</span>
-                                        </li>
-                                    ))}
-                                </ul>
+            const renderOpenFactsData = (theme) => (
+                <React.Fragment>
+                    <div className={`bg-${theme.color}-50 p-6 border-b border-${theme.color}-100`}>
+                        <div className="flex items-start gap-4">
+                            {productData.image_url ? (
+                                <img src={productData.image_url} alt="" className="w-20 h-20 object-cover rounded-xl border bg-white" />
                             ) : (
-                                <p className="text-xl text-slate-500 italic p-6 bg-slate-50 rounded-xl">
-                                    Ingredient list not yet in public database.
-                                </p>
+                                <i className={`fa-solid ${theme.icon} text-${theme.color}-500 text-5xl`}></i>
                             )}
+                            <div>
+                                <span className={`bg-${theme.color}-200 text-${theme.color}-800 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider`}>{theme.label}</span>
+                                <h2 className="text-2xl font-extrabold text-slate-900 mt-1">{productData.product_name || "Unknown"}</h2>
+                                <p className="text-lg text-slate-500">{productData.brands}</p>
+                            </div>
                         </div>
-                    </React.Fragment>
-                );
-            };
+                    </div>
+                    {productData.allergens_hierarchy?.length > 0 && (
+                        <div className="bg-amber-50 p-6 border-b border-amber-100 flex gap-4">
+                            <i className="fa-solid fa-triangle-exclamation text-amber-600 text-2xl shrink-0 mt-1"></i>
+                            <div>
+                                <h3 className="text-xl font-bold text-amber-900 mb-1">Allergens/Warnings</h3>
+                                <p className="text-lg text-amber-800 font-medium">
+                                    {productData.allergens_hierarchy.map(a => typeof a === 'string' ? a.replace('en:', '').replace('-', ' ') : '').join(', ')}
+                                </p>
+                            </div>
+                        </div>
+                    )}
+                    <div className="p-6">
+                        <h3 className={`text-2xl font-bold text-slate-900 mb-4 flex items-center gap-2`}>
+                            <i className={`fa-solid fa-circle-info text-${theme.color}-600`}></i> Ingredients
+                        </h3>
+                        {productData.ingredients_text ? (
+                            <ul className="space-y-2" style={{ fontSize: `${textSize}px`, lineHeight: '1.4' }}>
+                                {formatIngredientsList(productData.ingredients_text).map((ing, i) => (
+                                    <li key={i} className="flex gap-3 p-3 bg-slate-50 rounded-lg border border-slate-100">
+                                        <span className={`text-${theme.color}-500 font-black`}>•</span>
+                                        <span className="text-slate-700 capitalize-first">{ing}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : (
+                            <p className="text-slate-400 italic p-4">Ingredient list not in public database yet.</p>
+                        )}
+                    </div>
+                </React.Fragment>
+            );
 
             const renderMedicine = () => (
                 <React.Fragment>
-                    <div className="bg-teal-50 p-6 border-b border-teal-200">
+                    <div className="bg-teal-50 p-6 border-b border-teal-100">
                         <div className="flex items-start gap-4">
-                            <i className="fa-solid fa-pills text-teal-600 text-6xl"></i>
+                            <i className="fa-solid fa-pills text-teal-600 text-5xl"></i>
                             <div>
-                                <span className="bg-teal-200 text-teal-800 text-sm font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-2 inline-block">Medicine / OTC</span>
-                                <h2 className="text-3xl font-black text-slate-900 leading-tight">
-                                    {productData.openfda?.brand_name?.[0] || productData.openfda?.generic_name?.[0] || "Unknown Medicine"}
+                                <span className="bg-teal-200 text-teal-800 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">Medicine</span>
+                                <h2 className="text-2xl font-extrabold text-slate-900 mt-1">
+                                    {productData.openfda?.brand_name?.[0] || productData.openfda?.generic_name?.[0] || "Unknown"}
                                 </h2>
-                                <p className="text-xl text-teal-800 font-medium mt-1">{productData.openfda?.manufacturer_name?.[0]}</p>
+                                <p className="text-lg text-teal-800 font-medium">{productData.openfda?.manufacturer_name?.[0]}</p>
                             </div>
                         </div>
                     </div>
-
                     {productData.purpose && (
                         <div className="p-6 bg-blue-50 border-b border-blue-100">
-                            <h3 className="text-2xl font-bold text-blue-900 mb-3 flex items-center gap-2">
-                                <i className="fa-solid fa-circle-info"></i> Purpose
-                            </h3>
-                            <p style={{ fontSize: `${textSize}px`, lineHeight: '1.5' }} className="text-blue-900 font-medium">{cleanFdaText(productData.purpose)}</p>
+                            <h3 className="text-xl font-bold text-blue-900 mb-2 flex items-center gap-2"><i className="fa-solid fa-circle-info"></i> Purpose</h3>
+                            <p style={{ fontSize: `${textSize}px` }} className="text-blue-800">{cleanFdaText(productData.purpose)}</p>
                         </div>
                     )}
-
-                    <div className="p-6 border-b border-slate-100">
-                        <h3 className="text-3xl font-bold text-slate-900 mb-4 flex items-center gap-3">
-                            <i className="fa-solid fa-pills text-teal-600"></i> Active Ingredients
-                        </h3>
+                    <div className="p-6 border-b">
+                        <h3 className="text-xl font-bold text-slate-800 mb-2 flex items-center gap-2"><i className="fa-solid fa-pills text-teal-600"></i> Active Ingredients</h3>
                         {productData.active_ingredient ? (
-                            <p style={{ fontSize: `${textSize}px`, lineHeight: '1.6' }} className="text-slate-800 bg-teal-50/50 p-4 rounded-xl border border-teal-100">{cleanFdaText(productData.active_ingredient)}</p>
-                        ) : (
-                            <p className="text-xl text-slate-500 italic">Not listed</p>
-                        )}
+                            <p style={{ fontSize: `${textSize}px` }} className="text-slate-700 bg-teal-50/50 p-3 rounded-lg">{cleanFdaText(productData.active_ingredient)}</p>
+                        ) : <p className="text-slate-400 italic">Not listed</p>}
                     </div>
-
                     {productData.warnings && (
-                        <div className="p-6 border-b border-amber-200 bg-amber-50">
-                            <h3 className="text-3xl font-bold text-amber-900 mb-4 flex items-center gap-3">
-                                <i className="fa-solid fa-shield-halved text-amber-600"></i> Warnings
-                            </h3>
-                            <p style={{ fontSize: `${textSize}px`, lineHeight: '1.6' }} className="text-amber-900 font-medium">{cleanFdaText(productData.warnings)}</p>
+                        <div className="p-6 border-b bg-amber-50">
+                            <h3 className="text-xl font-bold text-amber-900 mb-2 flex items-center gap-2"><i className="fa-solid fa-shield-halved text-amber-600"></i> Warnings</h3>
+                            <p style={{ fontSize: `${textSize}px` }} className="text-amber-900">{cleanFdaText(productData.warnings)}</p>
                         </div>
                     )}
-
                     <div className="p-6">
-                        <h3 className="text-2xl font-bold text-slate-700 mb-4">Inactive Ingredients</h3>
+                        <h3 className="text-lg font-bold text-slate-600 mb-2">Inactive Ingredients</h3>
                         {productData.inactive_ingredient ? (
-                            <p style={{ fontSize: `${Math.max(textSize - 4, 16)}px`, lineHeight: '1.6' }} className="text-slate-600">{cleanFdaText(productData.inactive_ingredient)}</p>
-                        ) : (
-                            <p className="text-lg text-slate-500 italic">Not listed.</p>
-                        )}
+                            <p style={{ fontSize: `${Math.max(textSize-4, 16)}px` }} className="text-slate-600">{cleanFdaText(productData.inactive_ingredient)}</p>
+                        ) : <p className="text-slate-400 italic">Not listed</p>}
                     </div>
                 </React.Fragment>
             );
 
             const renderGeneral = () => (
                 <React.Fragment>
-                    <div className="bg-indigo-50 p-6 border-b border-indigo-200">
+                    <div className="bg-indigo-50 p-6 border-b border-indigo-100">
                         <div className="flex items-start gap-4">
-                            {productData.images && productData.images.length > 0 ? (
-                                <img src={productData.images[0]} alt="Product" className="w-24 h-24 object-cover rounded-xl border border-slate-300 bg-white" />
+                            {productData.images?.[0] ? (
+                                <img src={productData.images[0]} alt="" className="w-20 h-20 object-cover rounded-xl border bg-white" />
                             ) : (
-                                <i className="fa-solid fa-box text-indigo-600 text-6xl"></i>
+                                <i className="fa-solid fa-box text-indigo-500 text-5xl"></i>
                             )}
                             <div>
-                                <span className="bg-indigo-200 text-indigo-800 text-sm font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-2 inline-block">General Product</span>
-                                <h2 className="text-3xl font-black text-slate-900 leading-tight">{productData.title || "Unknown Item"}</h2>
-                                <p className="text-xl text-indigo-800 font-medium mt-1">{productData.brand}</p>
+                                <span className="bg-indigo-200 text-indigo-800 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">General</span>
+                                <h2 className="text-2xl font-extrabold text-slate-900 mt-1">{productData.title || "Unknown"}</h2>
+                                <p className="text-lg text-indigo-800 font-medium">{productData.brand}</p>
                             </div>
                         </div>
                     </div>
-
                     <div className="p-6">
-                        <h3 className="text-3xl font-bold text-slate-900 mb-6 flex items-center gap-3">
-                            <i className="fa-solid fa-circle-info text-indigo-600"></i> Details & Description
-                        </h3>
+                        <h3 className="text-xl font-bold text-slate-800 mb-3 flex items-center gap-2"><i className="fa-solid fa-circle-info text-indigo-600"></i> Description</h3>
                         {productData.description ? (
-                            <p style={{ fontSize: `${textSize}px`, lineHeight: '1.6' }} className="text-slate-800 bg-slate-50 p-6 rounded-xl border border-slate-200">
-                                {productData.description}
-                            </p>
+                            <p style={{ fontSize: `${textSize}px`, lineHeight: '1.6' }} className="text-slate-700 bg-slate-50 p-4 rounded-lg">{productData.description}</p>
                         ) : (
-                            <p className="text-xl text-slate-500 italic p-6 bg-slate-50 rounded-xl">No detailed description available.</p>
+                            <p className="text-slate-400 italic p-4">No description available.</p>
                         )}
                     </div>
                 </React.Fragment>
             );
 
-            // --- Main Render ---
+            const isHomeView = !scanning && !productData && !loading && !error && !showHistory;
+            const showBottomNav = isHomeView || showHistory;
+
+            const navTo = (hash) => { window.location.hash = hash; };
+
             return (
-                <div className="min-h-screen pb-20">
-                    <header className="bg-indigo-900 text-white p-4 shadow-md sticky top-0 z-10 flex justify-between items-center">
-                        <h1 className="text-2xl font-bold flex items-center gap-2 cursor-pointer" onClick={resetApp} title="Home (Reset)">
-                            <i className="fa-solid fa-layer-group"></i> MagnifyAll
+                <div className="min-h-screen pb-20 flex flex-col">
+                    {/* Header */}
+                    <header className="bg-white shadow-sm border-b border-slate-200 px-4 py-3 flex items-center justify-between sticky top-0 z-10">
+                        <h1 className="text-xl font-extrabold tracking-tight text-indigo-700 flex items-center gap-2 cursor-pointer" onClick={resetApp}>
+                            <i className="fa-solid fa-magnifying-glass-plus text-2xl"></i> MagnifyAll
                         </h1>
                         <div className="flex gap-2">
                             {productData && !showHistory && (
-                                <React.Fragment>
-                                    <button onClick={decreaseText} className="p-3 bg-indigo-800 hover:bg-indigo-700 rounded-lg shadow focus:outline-none" aria-label="Decrease Text">
-                                        <i className="fa-solid fa-magnifying-glass-minus text-xl"></i>
+                                <>
+                                    <button onClick={decreaseText} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg shadow-sm" aria-label="Decrease text">
+                                        <i className="fa-solid fa-magnifying-glass-minus"></i>
                                     </button>
-                                    <button onClick={increaseText} className="p-3 bg-indigo-800 hover:bg-indigo-700 rounded-lg shadow focus:outline-none" aria-label="Increase Text">
-                                        <i className="fa-solid fa-magnifying-glass-plus text-xl"></i>
+                                    <button onClick={increaseText} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg shadow-sm" aria-label="Increase text">
+                                        <i className="fa-solid fa-magnifying-glass-plus"></i>
                                     </button>
-                                </React.Fragment>
+                                </>
                             )}
-                            {/* Reset button replaces the reload */}
-                            <button onClick={resetApp} className="p-3 bg-indigo-800 hover:bg-indigo-700 rounded-lg shadow focus:outline-none" aria-label="Reset App" title="Reset App to Home">
-                                <i className="fa-solid fa-house text-xl"></i>
+                            <button onClick={resetApp} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg shadow-sm" title="Home">
+                                <i className="fa-solid fa-house"></i>
                             </button>
                         </div>
                     </header>
 
-                    <main className="max-w-2xl mx-auto p-4 mt-4">
-                        {showHistory ? (
-                            <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 mb-6">
-                                <div className="flex justify-between items-center mb-6">
-                                    <button onClick={safeBack} className="flex items-center gap-2 text-indigo-700 font-bold text-xl hover:underline focus:outline-none">
+                    {/* Main content */}
+                    <main className="flex-1 max-w-2xl mx-auto w-full p-4">
+                        {loading && (
+                            <div className="bg-white rounded-3xl shadow-soft p-12 flex flex-col items-center justify-center">
+                                <i className="fa-solid fa-spinner fa-spin text-indigo-500 text-6xl mb-4"></i>
+                                <p className="text-xl text-slate-500 font-medium">Searching catalogs…</p>
+                            </div>
+                        )}
+
+                        {error && !loading && (
+                            <div className="bg-red-50 border-l-8 border-red-400 p-6 rounded-2xl shadow-sm text-center">
+                                <i className="fa-solid fa-circle-exclamation text-red-400 text-5xl mb-4"></i>
+                                <h2 className="text-2xl font-bold text-red-800 mb-2">Not Found</h2>
+                                <p className="text-red-700 mb-4 whitespace-pre-line">{error}</p>
+                                <button onClick={safeBack} className="px-6 py-2 bg-red-100 hover:bg-red-200 text-red-800 rounded-xl font-semibold flex items-center gap-2 mx-auto">
+                                    <i className="fa-solid fa-arrow-left"></i> Back
+                                </button>
+                            </div>
+                        )}
+
+                        {scanning && !loading && !error && (
+                            <div className="bg-white rounded-3xl shadow-soft overflow-hidden">
+                                <div className="p-4 flex items-center justify-between bg-slate-50 border-b">
+                                    <button onClick={safeBack} className="text-slate-500 hover:text-slate-800 font-bold text-xl flex items-center gap-2">
                                         <i className="fa-solid fa-arrow-left"></i> Back
                                     </button>
-                                    <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-                                        <i className="fa-solid fa-clock-rotate-left"></i> History
-                                    </h2>
-                                    <div className="w-16"></div> {/* Spacer for alignment */}
+                                    <h2 className="text-xl font-bold text-slate-800">Scan Barcode</h2>
+                                    <div className="w-10"></div>
                                 </div>
+                                <div id="reader" className="w-full border-b-4 border-indigo-200"></div>
+                                <p className="text-center p-4 text-slate-500 font-medium">Point camera at a barcode</p>
+                            </div>
+                        )}
 
+                        {showHistory && (
+                            <div className="bg-white rounded-3xl shadow-soft border border-slate-100 p-6 mb-4">
+                                <div className="flex items-center justify-between mb-4">
+                                    <button onClick={safeBack} className="text-indigo-600 font-bold text-lg flex items-center gap-2">
+                                        <i className="fa-solid fa-arrow-left"></i> Back
+                                    </button>
+                                    <h2 className="text-xl font-bold text-slate-800">History</h2>
+                                    <div className="w-16"></div>
+                                </div>
                                 <div className="flex border-b border-slate-200 mb-4">
-                                    <button 
-                                        onClick={() => setHistoryTab("success")} 
-                                        className={`flex-1 py-3 text-lg font-bold border-b-4 ${historyTab === "success" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-500 hover:text-slate-700"} focus:outline-none`}
-                                    >
-                                        Successful ({history.success.length})
+                                    <button onClick={() => setHistoryTab("success")} className={`flex-1 py-2 text-base font-bold border-b-2 ${historyTab === "success" ? "border-indigo-500 text-indigo-700" : "border-transparent text-slate-400"}`}>
+                                        Found ({history.success.length})
                                     </button>
-                                    <button 
-                                        onClick={() => setHistoryTab("failed")} 
-                                        className={`flex-1 py-3 text-lg font-bold border-b-4 ${historyTab === "failed" ? "border-red-500 text-red-600" : "border-transparent text-slate-500 hover:text-slate-700"} focus:outline-none`}
-                                    >
-                                        Unsuccessful ({history.failed.length})
+                                    <button onClick={() => setHistoryTab("failed")} className={`flex-1 py-2 text-base font-bold border-b-2 ${historyTab === "failed" ? "border-red-400 text-red-600" : "border-transparent text-slate-400"}`}>
+                                        Missed ({history.failed.length})
                                     </button>
                                 </div>
-
-                                <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+                                <div className="space-y-3 max-h-[50vh] overflow-y-auto">
                                     {historyTab === "success" && history.success.map((item, i) => (
-                                        <div key={i} className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex justify-between items-center cursor-pointer hover:bg-slate-100" onClick={() => searchUniversal(item.query)}>
+                                        <div key={i} className="p-3 bg-slate-50 rounded-xl hover:bg-slate-100 flex justify-between items-center cursor-pointer"
+                                            onClick={() => { window.location.hash = ''; searchUniversal(item.query); }}>
                                             <div>
-                                                <p className="font-bold text-lg text-slate-900">{item.name}</p>
-                                                <p className="text-slate-500 text-sm">Searched: {item.query} • {new Date(item.date).toLocaleDateString()}</p>
+                                                <p className="font-bold text-slate-800">{item.name}</p>
+                                                <p className="text-xs text-slate-500">{item.query} • {new Date(item.date).toLocaleDateString()}</p>
                                             </div>
                                             <i className="fa-solid fa-chevron-right text-slate-400"></i>
                                         </div>
                                     ))}
-                                    {historyTab === "success" && history.success.length === 0 && (
-                                        <p className="text-center text-slate-500 py-8">No successful scans yet.</p>
-                                    )}
+                                    {historyTab === "success" && !history.success.length && <p className="text-slate-400 text-center py-6">No successful scans yet.</p>}
 
                                     {historyTab === "failed" && history.failed.map((item, i) => (
-                                        <div key={i} className="p-4 bg-red-50 rounded-xl border border-red-100 flex justify-between items-center cursor-pointer hover:bg-red-100" onClick={() => searchUniversal(item.query)}>
+                                        <div key={i} className="p-3 bg-red-50 rounded-xl hover:bg-red-100 flex justify-between items-center cursor-pointer"
+                                            onClick={() => { window.location.hash = ''; searchUniversal(item.query); }}>
                                             <div>
-                                                <p className="font-bold text-lg text-red-900">{item.query}</p>
-                                                <p className="text-red-700 text-sm">{item.error}</p>
-                                                <p className="text-red-500 text-xs mt-1">{new Date(item.date).toLocaleDateString()}</p>
+                                                <p className="font-bold text-red-800">{item.query}</p>
+                                                <p className="text-xs text-red-600">{item.error}</p>
+                                                <p className="text-xs text-red-500">{new Date(item.date).toLocaleDateString()}</p>
                                             </div>
-                                            <i className="fa-solid fa-rotate-right text-red-400"></i>
+                                            <i className="fa-solid fa-redo text-red-400"></i>
                                         </div>
                                     ))}
-                                    {historyTab === "failed" && history.failed.length === 0 && (
-                                        <p className="text-center text-slate-500 py-8">No failed scans yet.</p>
-                                    )}
+                                    {historyTab === "failed" && !history.failed.length && <p className="text-slate-400 text-center py-6">No failed scans.</p>}
                                 </div>
                                 {(history.success.length > 0 || history.failed.length > 0) && (
-                                    <button onClick={() => { if(confirm('Clear all history?')) setHistory({success:[], failed:[]}); }} className="w-full mt-6 py-3 text-red-600 font-bold hover:bg-red-50 rounded-xl transition-colors border border-red-100 focus:outline-none">
+                                    <button onClick={() => { if(confirm('Clear all history?')) setHistory({success:[], failed:[]}); }} className="w-full mt-4 py-2 text-red-500 font-bold hover:bg-red-50 rounded-lg">
                                         Clear History
                                     </button>
                                 )}
                             </div>
-                        ) : (
-                            <React.Fragment>
-                                {loading && (
-                                    <div className="flex flex-col items-center justify-center p-12 bg-white rounded-3xl shadow-sm border border-slate-200">
-                                        <i className="fa-solid fa-spinner fa-spin text-indigo-600 text-6xl mb-6"></i>
-                                        <p className="text-2xl text-slate-600 font-medium text-center">Searching catalogs...</p>
-                                    </div>
-                                )}
+                        )}
 
-                                {error && !loading && (
-                                    <div className="bg-red-50 border-l-8 border-red-500 p-6 rounded-2xl shadow-sm mb-6 flex flex-col items-center text-center">
-                                        <i className="fa-solid fa-triangle-exclamation text-red-500 text-5xl mb-4"></i>
-                                        <h2 className="text-2xl font-bold text-red-800 mb-2">Not Found</h2>
-                                        <p className="text-xl text-red-700 mb-6 whitespace-pre-line">{error}</p>
-                                        <button onClick={safeBack} className="bg-red-100 text-red-800 px-6 py-3 rounded-xl text-xl font-semibold hover:bg-red-200 flex items-center gap-2 mt-4 focus:outline-none">
-                                            <i className="fa-solid fa-arrow-left"></i> Go Back
+                        {isHomeView && !loading && !error && (
+                            <div className="space-y-5">
+                                <div className="bg-gradient-to-br from-indigo-50 to-sky-50 rounded-3xl p-8 text-center shadow-soft border border-white">
+                                    <div className="flex justify-center gap-4 mb-4 text-5xl">
+                                        <i className="fa-solid fa-apple-whole text-green-400"></i>
+                                        <i className="fa-solid fa-pump-soap text-pink-400"></i>
+                                        <i className="fa-solid fa-spray-can-sparkles text-blue-400"></i>
+                                        <i className="fa-solid fa-pills text-teal-400"></i>
+                                    </div>
+                                    <h2 className="text-3xl font-black text-indigo-900 mb-2">Read Tiny Print</h2>
+                                    <p className="text-lg text-slate-600 mb-6">Scan barcodes on food, cosmetics, cleaning products, or medicine.</p>
+                                    <button onClick={() => navTo('#scanner')} className="w-full py-5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xl font-bold shadow-lg flex items-center justify-center gap-3">
+                                        <i className="fa-solid fa-camera text-2xl"></i> Scan Barcode
+                                    </button>
+                                </div>
+                                <div className="bg-white rounded-2xl p-6 shadow-soft border border-slate-100">
+                                    <h3 className="text-xl font-bold text-slate-800 mb-4">Or type barcode</h3>
+                                    <form onSubmit={handleManualSearch} className="flex flex-col gap-3">
+                                        <input type="text" value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="e.g. 0049000028904" className="w-full p-4 text-lg border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 outline-none" />
+                                        <button type="submit" disabled={!searchInput} className="w-full py-4 bg-slate-800 hover:bg-slate-900 disabled:bg-slate-300 text-white rounded-xl text-lg font-bold">
+                                            <i className="fa-solid fa-search mr-2"></i> Find Details
                                         </button>
-                                    </div>
-                                )}
+                                    </form>
+                                </div>
+                            </div>
+                        )}
 
-                                {scanning && !loading && !productData && !error && (
-                                    <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-200 mb-6">
-                                        <div className="flex justify-between items-center mb-4">
-                                            <button onClick={safeBack} className="flex items-center gap-2 text-slate-500 hover:text-slate-800 font-bold text-xl ml-2 focus:outline-none">
-                                                <i className="fa-solid fa-arrow-left"></i> Back
-                                            </button>
-                                            <h2 className="text-2xl font-bold text-slate-900">Scan Barcode</h2>
-                                            <div className="w-16"></div>
-                                        </div>
-                                        <div id="reader" className="w-full overflow-hidden rounded-xl border-4 border-indigo-100"></div>
-                                        <p className="text-center text-xl mt-6 font-medium text-slate-600">Point camera at the barcode.</p>
-                                    </div>
-                                )}
-
-                                {!scanning && !productData && !loading && !error && (
-                                    <div className="space-y-6">
-                                        <div className="bg-indigo-50 p-8 rounded-3xl border border-indigo-100 text-center shadow-sm">
-                                            <div className="flex justify-center gap-6 mb-6 text-indigo-500 text-5xl">
-                                                <i className="fa-solid fa-apple-whole text-green-500"></i>
-                                                <i className="fa-solid fa-pump-soap text-pink-500"></i>
-                                                <i className="fa-solid fa-spray-can-sparkles text-blue-500"></i>
-                                                <i className="fa-solid fa-pills text-teal-500"></i>
-                                            </div>
-                                            <h2 className="text-3xl font-black text-indigo-900 mb-4">Read Tiny Print Easily</h2>
-                                            <p className="text-xl text-indigo-800 mb-8">Scan barcodes on food, cosmetics, cleaning supplies, or medicine.</p>
-
-                                            <button 
-                                                onClick={() => window.location.hash = 'scanner'}
-                                                className="w-full py-6 rounded-2xl text-2xl font-bold text-white shadow-lg flex justify-center items-center gap-3 transition-transform active:scale-95 bg-indigo-600 hover:bg-indigo-700 focus:outline-none"
-                                            >
-                                                <i className="fa-solid fa-camera text-3xl"></i>
-                                                Tap to Scan Barcode
-                                            </button>
-                                        </div>
-
-                                        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-                                            <h3 className="text-2xl font-bold mb-4 text-slate-800">Or Type Barcode</h3>
-                                            <form onSubmit={handleManualSearch} className="flex flex-col gap-4">
-                                                <input 
-                                                    type="text" 
-                                                    value={searchInput}
-                                                    onChange={(e) => setSearchInput(e.target.value)}
-                                                    placeholder="e.g. 0049000028904"
-                                                    className="w-full p-5 text-2xl border-2 border-slate-300 rounded-xl focus:border-indigo-600 focus:outline-none"
-                                                />
-                                                <button type="submit" disabled={!searchInput} className="w-full py-5 bg-slate-800 hover:bg-slate-900 disabled:bg-slate-300 text-white rounded-xl text-xl font-bold flex justify-center items-center gap-2 focus:outline-none">
-                                                    <i className="fa-solid fa-magnifying-glass"></i> Find Details
-                                                </button>
-                                            </form>
-                                        </div>
-                                        
-                                        <button onClick={() => window.location.hash = 'history'} className="w-full py-4 text-indigo-700 bg-indigo-100 hover:bg-indigo-200 rounded-xl text-xl font-bold flex justify-center items-center gap-2 mt-2 focus:outline-none">
-                                            <i className="fa-solid fa-clock-rotate-left"></i> View Scan History
-                                        </button>
-                                    </div>
-                                )}
-
-                                {productData && !loading && !error && (
-                                    <div className="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden">
-                                        <div className="p-4 bg-slate-100 border-b border-slate-200">
-                                            <button onClick={resetApp} className="flex items-center gap-2 text-indigo-700 font-bold text-xl hover:underline focus:outline-none">
-                                                <i className="fa-solid fa-arrow-left"></i> Home
-                                            </button>
-                                        </div>
-
-                                        {productType === "food" && renderOpenFactsData({ color: "green", icon: "fa-apple-whole", label: "Food Item" })}
-                                        {productType === "beauty" && renderOpenFactsData({ color: "pink", icon: "fa-pump-soap", label: "Personal Care" })}
-                                        {productType === "products" && renderOpenFactsData({ color: "blue", icon: "fa-spray-can-sparkles", label: "General Product" })}
-                                        {productType === "medicine" && renderMedicine()}
-                                        {productType === "general" && renderGeneral()}
-
-                                        <div className="p-6 bg-slate-100 border-t border-slate-200">
-                                            <button onClick={() => { setSearchInput(""); window.location.hash = 'scanner'; window.scrollTo(0,0); }} className="w-full py-6 bg-indigo-900 hover:bg-indigo-950 text-white rounded-2xl text-2xl font-bold shadow-lg flex justify-center items-center gap-3 focus:outline-none">
-                                                <i className="fa-solid fa-barcode text-3xl"></i> Scan Next Item
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
-                            </React.Fragment>
+                        {productData && !loading && !error && (
+                            <div className="bg-white rounded-3xl shadow-soft overflow-hidden border border-slate-100">
+                                <div className="p-3 bg-slate-50 border-b flex">
+                                    <button onClick={resetApp} className="text-indigo-600 font-bold flex items-center gap-2">
+                                        <i className="fa-solid fa-arrow-left"></i> Home
+                                    </button>
+                                </div>
+                                {productType === "food" && renderOpenFactsData({ color: "green", icon: "fa-apple-whole", label: "Food" })}
+                                {productType === "beauty" && renderOpenFactsData({ color: "pink", icon: "fa-pump-soap", label: "Personal Care" })}
+                                {productType === "products" && renderOpenFactsData({ color: "blue", icon: "fa-spray-can-sparkles", label: "Product" })}
+                                {productType === "medicine" && renderMedicine()}
+                                {productType === "general" && renderGeneral()}
+                                <div className="p-4 bg-slate-50 border-t">
+                                    <button onClick={() => { setSearchInput(""); window.location.hash = 'scanner'; }} className="w-full py-4 bg-indigo-700 hover:bg-indigo-800 text-white rounded-2xl text-xl font-bold shadow flex items-center justify-center gap-3">
+                                        <i className="fa-solid fa-barcode"></i> Scan Next Item
+                                    </button>
+                                </div>
+                            </div>
                         )}
                     </main>
+
+                    {/* Bottom navigation */}
+                    {showBottomNav && (
+                        <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 flex justify-around items-center py-2 px-4 shadow-[0_-4px_10px_rgba(0,0,0,0.03)] z-20">
+                            <button onClick={() => navTo('')} className={`nav-item flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${window.location.hash === '' || window.location.hash === '#home' ? 'text-indigo-600' : 'text-slate-400'}`}>
+                                <i className="fa-solid fa-house text-2xl"></i>
+                                <span className="text-xs font-semibold">Home</span>
+                            </button>
+                            <button onClick={() => navTo('#scanner')} className={`nav-item flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${window.location.hash === '#scanner' ? 'text-indigo-600' : 'text-slate-400'}`}>
+                                <i className="fa-solid fa-camera text-2xl"></i>
+                                <span className="text-xs font-semibold">Scan</span>
+                            </button>
+                            <button onClick={() => navTo('#history')} className={`nav-item flex flex-col items-center gap-1 px-4 py-1 rounded-lg ${window.location.hash === '#history' ? 'text-indigo-600' : 'text-slate-400'}`}>
+                                <i className="fa-solid fa-clock-rotate-left text-2xl"></i>
+                                <span className="text-xs font-semibold">History</span>
+                            </button>
+                        </nav>
+                    )}
                 </div>
             );
         };
